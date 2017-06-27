@@ -18,6 +18,12 @@ include_directories(
   ${mraa_LIB_INCLUDE_DIRS}
 )
 
+check_include_file("linux/gpio.h" HAVE_GPIO_H)
+if (HAVE_GPIO_H)
+  message(STATUS "INFO - linux/gpio.h found")
+  add_definitions(-DGPIOD_INTERFACE=1)
+endif()
+
 set (mraa_LIB_SRCS_NOAUTO
   ${PROJECT_SOURCE_DIR}/src/mraa.c
   ${PROJECT_SOURCE_DIR}/src/gpio/gpio.c

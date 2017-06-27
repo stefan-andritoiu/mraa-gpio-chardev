@@ -36,6 +36,10 @@
 #include <sys/mman.h>
 #include <errno.h>
 
+#if defined(GPIOD_INTERFACE)
+#include <sys/ioctl.h>
+#endif
+
 #define SYSFS_CLASS_GPIO "/sys/class/gpio"
 #define MAX_SIZE 64
 #define POLL_TIMEOUT
@@ -95,6 +99,7 @@ mraa_gpio_init_internal(mraa_adv_func_t* func_table, int pin)
     dev->isr_thread_terminating = 0;
     dev->phy_pin = -1;
 
+#ifndef GPIOD_INTERFACE
     // then check to make sure the pin is exported.
     char directory[MAX_SIZE];
     snprintf(directory, MAX_SIZE, SYSFS_CLASS_GPIO "/gpio%d/", dev->pin);
@@ -118,6 +123,7 @@ mraa_gpio_init_internal(mraa_adv_func_t* func_table, int pin)
         dev->owner = 1;
         close(export);
     }
+#endif
 
 init_internal_cleanup:
     if (status != MRAA_SUCCESS) {
@@ -166,6 +172,21 @@ mraa_gpio_init(int pin)
     if (r == NULL) {
         return NULL;
     }
+
+#if defined(GPIOD_INTERFACE)
+    mraa_gpiod_chip_info* cinfo = mraa_get_chip_info_by_number(board->pins[pin].gpio.gpio_chip);
+    if (!cinfo) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: error getting gpio chip info");
+        free(r);
+        return NULL;
+    }
+    r->dev_fd = cinfo->chip_fd;
+    r->gpio_chip = board->pins[pin].gpio.gpio_chip;
+    r->gpio_line = board->pins[pin].gpio.gpio_line;
+    r->line_handle = -1;
+    free(cinfo);
+#endif
+    
     if (r->phy_pin == -1)
         r->phy_pin = pin;
 
@@ -539,6 +560,37 @@ mraa_gpio_dir(mraa_gpio_context dev, mraa_gpio_dir_t dir)
         return MRAA_ERROR_INVALID_HANDLE;
     }
 
+#if defined(GPIOD_INTERFACE)
+
+    int line_handle;
+    unsigned flags = 0;
+
+    switch (dir) {
+        case MRAA_GPIO_OUT:
+            flags |= GPIOHANDLE_REQUEST_OUTPUT;
+            break;
+        case MRAA_GPIO_IN:
+            flags |= GPIOHANDLE_REQUEST_INPUT;
+            break;
+        default:
+            return MRAA_ERROR_FEATURE_NOT_IMPLEMENTED;
+    }
+    
+    if (dev->line_handle != -1) {
+        close(dev->line_handle);
+        dev->line_handle = -1;
+    }
+    
+    line_handle = mraa_get_line_handle(dev->dev_fd, dev->gpio_line, flags, 0);
+    if (line_handle <= 0) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: error setting gpio direction");
+        return MRAA_ERROR_INVALID_RESOURCE;
+    }
+    
+    dev->line_handle = line_handle;
+    
+#else
+
     if (IS_FUNC_DEFINED(dev, gpio_dir_replace)) {
         return dev->advance_func->gpio_dir_replace(dev, dir);
     }
@@ -602,6 +654,8 @@ mraa_gpio_dir(mraa_gpio_context dev, mraa_gpio_dir_t dir)
     close(direction);
     if (IS_FUNC_DEFINED(dev, gpio_dir_post))
         return dev->advance_func->gpio_dir_post(dev, dir);
+    
+#endif
     return MRAA_SUCCESS;
 }
 
@@ -662,6 +716,17 @@ mraa_gpio_read(mraa_gpio_context dev)
         return -1;
     }
 
+#if defined(GPIOD_INTERFACE)
+
+    int value = mraa_get_line_value(dev->line_handle);
+    if (value < 0) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: error reading gpio");
+        return -1;
+    }
+    
+    return value;
+#else
+
     if (IS_FUNC_DEFINED(dev, gpio_read_replace))
         return dev->advance_func->gpio_read_replace(dev);
 
@@ -684,6 +749,8 @@ mraa_gpio_read(mraa_gpio_context dev)
     lseek(dev->value_fp, 0, SEEK_SET);
 
     return (int) strtol(bu, NULL, 10);
+    
+#endif
 }
 
 mraa_result_t
@@ -693,7 +760,15 @@ mraa_gpio_write(mraa_gpio_context dev, int value)
         syslog(LOG_ERR, "gpio: write: context is invalid");
         return MRAA_ERROR_INVALID_HANDLE;
     }
-
+#if defined(GPIOD_INTERFACE)
+    int status;
+    
+    status = mraa_set_line_value(dev->line_handle, value);
+    if (status < 0) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: error writing gpio");
+        return MRAA_ERROR_INVALID_RESOURCE;
+    }
+#else
     if (dev->mmap_write != NULL)
         return dev->mmap_write(dev, value);
 
@@ -727,6 +802,7 @@ mraa_gpio_write(mraa_gpio_context dev, int value)
 
     if (IS_FUNC_DEFINED(dev, gpio_write_post))
         return dev->advance_func->gpio_write_post(dev, value);
+#endif
     return MRAA_SUCCESS;
 }
 
@@ -787,7 +863,16 @@ mraa_gpio_close(mraa_gpio_context dev)
     if (dev->value_fp != -1) {
         close(dev->value_fp);
     }
+
+#if defined(GPIOD_INTERFACE)
+    if (dev->line_handle != -1) {
+        close(dev->line_handle);
+    }
+    close(dev->dev_fd);
+#else
     mraa_gpio_unexport(dev);
+#endif  
+    
     free(dev);
     return result;
 }
@@ -898,3 +983,280 @@ mraa_gpio_out_driver_mode(mraa_gpio_context dev, mraa_gpio_out_driver_mode_t mod
         return MRAA_ERROR_FEATURE_NOT_SUPPORTED;
     }
 }
+
+/* TODO: GPIOD INTERFACE */
+#if defined(GPIOD_INTERFACE)
+
+#define DEV_DIR "/dev/"
+#define CHIP_DEV_PREFIX "gpiochip"
+#define STR_SIZE 64
+
+/* Internal function. */
+int gpiod_ioctl(int fd, unsigned long gpio_request, void *data)
+{
+    int status;
+    
+    status = ioctl(fd, gpio_request, data);
+    if (status < 0) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: ioctl() error %d", status);
+    }
+    
+    return status;
+}
+
+mraa_gpiod_chip_info* mraa_get_chip_info_by_path(const char *path)
+{
+    mraa_gpiod_chip_info* cinfo;
+    int chip_fd, status;
+    
+    if (path == NULL) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: invalid device path");
+        return NULL;
+    }
+    
+    chip_fd = open(path, O_RDWR | O_CLOEXEC);
+    if (chip_fd < 0) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: could not open device file %s", path);
+        return NULL;
+    }
+    
+    cinfo = malloc(sizeof *cinfo);
+    if (!cinfo) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: malloc() fail");
+        close(chip_fd);
+        return NULL;
+    }
+    cinfo->chip_fd = chip_fd;
+    
+    status = gpiod_ioctl(cinfo->chip_fd, GPIO_GET_CHIPINFO_IOCTL, &cinfo->chip_info);
+    if (status < 0) {
+        close(cinfo->chip_fd);
+        free(cinfo);
+        return NULL;
+    }
+    
+    return cinfo;
+}
+
+mraa_gpiod_chip_info* mraa_get_chip_info_by_name(const char *name)
+{
+    mraa_gpiod_chip_info* cinfo;
+    char *full_path;
+    
+    /* TODO: check for string lengths first. */
+    
+    full_path = malloc(STR_SIZE * sizeof *full_path);
+    if (!full_path) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: malloc() fail");
+        return NULL;
+    }
+    
+    snprintf(full_path, STR_SIZE, "%s%s", DEV_DIR, name);
+    
+    cinfo =  mraa_get_chip_info_by_path(full_path);
+    free(full_path);
+    
+    return cinfo;
+}
+
+mraa_gpiod_chip_info* mraa_get_chip_info_by_label(const char *label)
+{
+    /* TODO */
+    return NULL;
+}
+
+mraa_gpiod_chip_info* mraa_get_chip_info_by_number(unsigned number)
+{
+    mraa_gpiod_chip_info* cinfo;
+    char *full_path;
+    
+    /* TODO: check for string lengths first. */
+    
+    full_path = malloc(STR_SIZE * sizeof *full_path);
+    if (!full_path) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: malloc() fail");
+        return NULL;
+    }
+    
+    snprintf(full_path, STR_SIZE, "%s%s%u", DEV_DIR, CHIP_DEV_PREFIX, number);
+    
+    cinfo =  mraa_get_chip_info_by_path(full_path);
+    free(full_path);
+    
+    return cinfo; 
+}
+
+void mraa_free_chip_info(mraa_gpiod_chip_info* cinfo)
+{
+    close(cinfo->chip_fd);
+    free(cinfo);
+}
+
+mraa_gpiod_line_info* mraa_get_line_info_from_descriptor(int chip_fd, unsigned line_number)
+{
+    int status;
+    mraa_gpiod_line_info* linfo;
+    struct gpioline_info __linfo;
+    
+    linfo =  malloc(sizeof *linfo);
+    
+    if (!linfo) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: malloc() fail");
+        return NULL;
+    }
+    
+    __linfo.line_offset = line_number;
+    status = gpiod_ioctl(chip_fd, GPIO_GET_LINEINFO_IOCTL, &__linfo);
+    if (status < 0) {
+        free(linfo);
+        return NULL;
+    }
+    
+    linfo->line_number = line_number;
+    strncpy(linfo->name, __linfo.name, 32);
+    strncpy(linfo->consumer, __linfo.consumer, 32);
+    linfo->kernel_owned = __linfo.flags & GPIOLINE_FLAG_KERNEL;
+    linfo->dir_out = __linfo.flags & GPIOLINE_FLAG_IS_OUT;
+    linfo->active_low = __linfo.flags & GPIOLINE_FLAG_ACTIVE_LOW;
+    linfo->open_drain = __linfo.flags & GPIOLINE_FLAG_OPEN_DRAIN;
+    linfo->open_source = __linfo.flags & GPIOLINE_FLAG_OPEN_SOURCE;
+    
+    return linfo;
+}
+
+mraa_gpiod_line_info* mraa_get_line_info_by_chip_number(unsigned chip_number, unsigned line_number)
+{
+    mraa_gpiod_line_info* linfo;
+    mraa_gpiod_chip_info* cinfo;
+    
+    cinfo = mraa_get_chip_info_by_number(chip_number);
+    if (!cinfo) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: invalid chip number");
+        return NULL;
+    }
+    
+    linfo = mraa_get_line_info_from_descriptor(cinfo->chip_fd, line_number);
+    
+    mraa_free_chip_info(cinfo);   
+    
+    return linfo;
+}
+
+mraa_gpiod_line_info* mraa_get_line_info_by_chip_name(const char* chip_name, unsigned line_number)
+{
+    mraa_gpiod_line_info* linfo;
+    mraa_gpiod_chip_info* cinfo;
+    
+    cinfo = mraa_get_chip_info_by_name(chip_name);
+    if (!cinfo) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: invalid chip number");
+        return NULL;
+    }
+    
+    linfo = mraa_get_line_info_from_descriptor(cinfo->chip_fd, line_number);
+    
+    mraa_free_chip_info(cinfo);   
+    
+    return linfo;
+}
+
+mraa_gpiod_line_info* mraa_get_line_info_by_chip_label(const char* chip_label, unsigned line_number)
+{
+    mraa_gpiod_line_info* linfo;
+    mraa_gpiod_chip_info* cinfo;
+    
+    cinfo = mraa_get_chip_info_by_label(chip_label);
+    if (!cinfo) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: invalid chip number");
+        return NULL;
+    }
+    
+    linfo = mraa_get_line_info_from_descriptor(cinfo->chip_fd, line_number);
+    
+    mraa_free_chip_info(cinfo);   
+    
+    return linfo;
+}
+
+mraa_gpiod_line_info* mraa_get_line_info_by_name(const char *name)
+{
+    /* TODO */
+    return NULL;
+}
+
+/*mraa_gpiod_line_info* mraa_get_line_info_by_consumer(const char *consumer)
+{
+    return NULL;
+}
+
+mraa_gpiod_line_info* mraa_get_line_info_by_consumer(unsigned chip_number, const char *consumer)
+{
+    return NULL;
+}
+
+mraa_gpiod_line_info* mraa_get_line_info_by_consumer(const char* chip_name, const char *consumer)
+{
+    return NULL;
+}*/
+
+void mraa_free_line_info(mraa_gpiod_line_info* linfo)
+{
+    free(linfo);
+}
+
+int mraa_get_line_handle(int chip_fd, unsigned line_offset, unsigned flags, unsigned default_value)
+{
+    int status;
+    struct gpiohandle_request __gpio_hreq;
+    
+    __gpio_hreq.lines = 1;
+    __gpio_hreq.lineoffsets[0] = line_offset;
+    
+    if (flags & GPIOHANDLE_REQUEST_OUTPUT) {
+        __gpio_hreq.default_values[0] = default_value;
+    }
+    __gpio_hreq.flags = flags;
+    
+    status = gpiod_ioctl(chip_fd, GPIO_GET_LINEHANDLE_IOCTL, &__gpio_hreq);
+    if (status < 0) {
+        syslog(LOG_ERR, "gpiod: ioctl() fail");
+        return status;
+    }
+    
+    if (__gpio_hreq.fd <= 0) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: invalid file descriptor");
+    }
+    
+    return __gpio_hreq.fd;
+}
+
+int mraa_set_line_value(int line_handle, unsigned char value)
+{
+    int status;
+    struct gpiohandle_data __hdata;
+    
+    /* For now we only have 1 value */
+    __hdata.values[0] = value;
+    
+    status = gpiod_ioctl(line_handle, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &__hdata);
+    if (status < 0) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: ioctl() fail");
+    }
+    
+    return status;
+}
+
+int mraa_get_line_value(int line_handle)
+{
+    int status;
+    struct gpiohandle_data __hdata;
+    
+    status = gpiod_ioctl(line_handle, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &__hdata);
+    if (status < 0) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: ioctl() fail");
+        return status;
+    }
+    
+    return __hdata.values[0];
+}
+#endif

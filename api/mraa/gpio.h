@@ -253,6 +253,45 @@ mraa_result_t mraa_gpio_input_mode(mraa_gpio_context dev, mraa_gpio_input_mode_t
  */
 mraa_result_t mraa_gpio_out_driver_mode(mraa_gpio_context dev, mraa_gpio_out_driver_mode_t mode);
 
+#if defined(GPIOD_INTERFACE)
+
+#include <linux/gpio.h>
+
+typedef struct {
+    int chip_fd;
+    struct gpiochip_info chip_info;
+} mraa_gpiod_chip_info;
+
+typedef struct {
+    unsigned line_number;
+    char name[32];
+    char consumer[32];
+    mraa_boolean_t kernel_owned;
+    mraa_boolean_t dir_out;
+    mraa_boolean_t active_low;
+    mraa_boolean_t open_drain;
+    mraa_boolean_t open_source;
+    
+} mraa_gpiod_line_info;
+
+
+mraa_gpiod_chip_info* mraa_get_chip_info_by_path(const char *path);
+mraa_gpiod_chip_info* mraa_get_chip_info_by_name(const char *name);
+mraa_gpiod_chip_info* mraa_get_chip_info_by_label(const char *label);
+mraa_gpiod_chip_info* mraa_get_chip_info_by_number(unsigned number);
+void mraa_free_chip_info(mraa_gpiod_chip_info* cinfo);
+
+mraa_gpiod_line_info* mraa_get_line_info_by_chip_number(unsigned chip_number, unsigned line_number);
+mraa_gpiod_line_info* mraa_get_line_info_by_chip_name(const char* chip_name, unsigned line_number);
+mraa_gpiod_line_info* mraa_get_line_info_by_chip_label(const char* chip_label, unsigned line_number);
+mraa_gpiod_line_info* mraa_get_line_info_by_name(const char *name);
+void mraa_free_line_info(mraa_gpiod_line_info* linfo);
+
+int mraa_get_line_handle(int chip_fd, unsigned line_offset, unsigned flags, unsigned default_value);
+int mraa_set_line_value(int line_handle, unsigned char value);
+int mraa_get_line_value(int line_handle);
+
+#endif
 #ifdef __cplusplus
 }
 #endif

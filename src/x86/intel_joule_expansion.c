@@ -679,24 +679,32 @@ mraa_joule_expansion_board()
     b->pins[pos].capabilities = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 0 };
     b->pins[pos].gpio.pinmap = 337;
     b->pins[pos].gpio.mux_total = 0;
+    b->pins[pos].gpio.gpio_chip = 2;
+    b->pins[pos].gpio.gpio_line = 22;
     pos++;
-
+    
     strncpy(b->pins[pos].name, "LED101", 8);
     b->pins[pos].capabilities = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 0 };
     b->pins[pos].gpio.pinmap = 338;
     b->pins[pos].gpio.mux_total = 0;
+    b->pins[pos].gpio.gpio_chip = 2;
+    b->pins[pos].gpio.gpio_line = 23;
     pos++;
-
+    
     strncpy(b->pins[pos].name, "LED102", 8);
     b->pins[pos].capabilities = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 0 };
     b->pins[pos].gpio.pinmap = 339;
     b->pins[pos].gpio.mux_total = 0;
+    b->pins[pos].gpio.gpio_chip = 2;
+    b->pins[pos].gpio.gpio_line = 24;
     pos++;
-
+    
     strncpy(b->pins[pos].name, "LED103", 8);
     b->pins[pos].capabilities = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 0 };
     b->pins[pos].gpio.pinmap = 340;
     b->pins[pos].gpio.mux_total = 0;
+    b->pins[pos].gpio.gpio_chip = 2;
+    b->pins[pos].gpio.gpio_line = 25;
     pos++;
 
     strncpy(b->pins[pos].name, "LEDBT", 8);
