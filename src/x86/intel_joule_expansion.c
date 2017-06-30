@@ -719,6 +719,14 @@ mraa_joule_expansion_board()
     b->pins[pos].gpio.mux_total = 0;
     pos++;
 
+    strncpy(b->pins[pos].name, "GPBTN", 8);
+    b->pins[pos].capabilities = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 0 };
+    b->pins[pos].gpio.pinmap = 446;
+    b->pins[pos].gpio.mux_total = 0;
+    b->pins[pos].gpio.gpio_chip = 0;
+    b->pins[pos].gpio.gpio_line = 17;
+    pos++;
+
     return b;
 
 error:
