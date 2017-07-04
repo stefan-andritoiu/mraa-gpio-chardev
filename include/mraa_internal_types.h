@@ -137,7 +137,7 @@ struct _gpio {
 
 #if defined(GPIOD_INTERFACE)
     int dev_fd;
-    int line_handle;
+    int gpiod_handle;
     unsigned int gpio_chip;
     unsigned int gpio_line;
 #endif
