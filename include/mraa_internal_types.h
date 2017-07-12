@@ -141,6 +141,9 @@ struct _gpio {
     unsigned int gpio_chip;
     unsigned int gpio_line;
 #endif
+
+    /* Multiple gpio support. */
+    struct _gpio *next;
 };
 
 /**
@@ -308,7 +311,7 @@ typedef struct {
     mraa_mux_t mux[6]; /** Array holding information about mux */
     unsigned int output_enable; /** Output Enable GPIO, for level shifting */
     mraa_pin_cap_complex_t complex_cap;
-    
+
     /* GPIOD_INTERFACE */
     unsigned int gpio_chip;
     unsigned int gpio_line;

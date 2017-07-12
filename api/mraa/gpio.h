@@ -114,6 +114,8 @@ typedef enum {
  */
 mraa_gpio_context mraa_gpio_init(int pin);
 
+mraa_gpio_context mraa_gpio_init_multiple(int num_pins, int pins[]);
+
 /**
  * Initialise gpio context without any mapping to a pin
  *
@@ -170,6 +172,8 @@ mraa_result_t mraa_gpio_mode(mraa_gpio_context dev, mraa_gpio_mode_t mode);
  */
 mraa_result_t mraa_gpio_dir(mraa_gpio_context dev, mraa_gpio_dir_t dir);
 
+mraa_result_t mraa_gpio_dir_multiple(mraa_gpio_context dev, mraa_gpio_dir_t dir);
+
 /**
  * Read Gpio direction
  *
@@ -188,6 +192,8 @@ mraa_result_t mraa_gpio_read_dir(mraa_gpio_context dev, mraa_gpio_dir_t *dir);
  */
 mraa_result_t mraa_gpio_close(mraa_gpio_context dev);
 
+mraa_result_t mraa_gpio_close_multiple(mraa_gpio_context dev);
+
 /**
  * Read the Gpio value. This can be 0 or 1. A resonse of -1 means that there
  * was a fatal error.
@@ -205,6 +211,8 @@ int mraa_gpio_read(mraa_gpio_context dev);
  * @return Result of operation
  */
 mraa_result_t mraa_gpio_write(mraa_gpio_context dev, int value);
+
+mraa_result_t mraa_gpio_write_multiple(mraa_gpio_context dev, int value);
 
 /**
  * Change ownership of the context.

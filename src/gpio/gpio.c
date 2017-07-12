@@ -215,6 +215,35 @@ mraa_gpio_init(int pin)
     return r;
 }
 
+mraa_gpio_context mraa_gpio_init_multiple(int num_pins, int pins[]) {
+#if defined(GPIOD_INTERFACE)
+    syslog(LOG_DEBUG, "mraa_gpio_init_multiple(): gpiod_interface");
+#else
+    syslog(LOG_DEBUG, "mraa_gpio_init_multiple(): sysfs_interface");
+    mraa_gpio_context head = NULL, current, tmp;
+
+    for (int i = 0; i < num_pins; ++i) {
+        tmp = mraa_gpio_init(pins[i]);
+        if (!tmp) {
+            syslog(LOG_ERR, "Couldn't initialise one node");
+            continue;
+        }
+
+        if (head == NULL) {
+            head = tmp;
+            current = tmp;
+        } else {
+            current->next = tmp;
+            current = tmp;
+        }
+
+        current->next = NULL;
+    }
+
+    return head;
+#endif
+}
+
 mraa_gpio_context
 mraa_gpio_init_raw(int pin)
 {
@@ -788,6 +817,17 @@ mraa_gpio_dir(mraa_gpio_context dev, mraa_gpio_dir_t dir)
 }
 
 mraa_result_t
+mraa_gpio_dir_multiple(mraa_gpio_context dev, mraa_gpio_dir_t dir)
+{
+    mraa_gpio_context it = dev;
+
+    while (it) {
+        mraa_gpio_dir(it, dir);
+        it = it->next;
+    }
+}
+
+mraa_result_t
 mraa_gpio_read_dir(mraa_gpio_context dev, mraa_gpio_dir_t *dir)
 {
 #ifndef GPIOD_INTERFACE
@@ -984,6 +1024,17 @@ mraa_gpio_write(mraa_gpio_context dev, int value)
     return MRAA_SUCCESS;
 }
 
+mraa_result_t
+mraa_gpio_write_multiple(mraa_gpio_context dev, int value)
+{
+    mraa_gpio_context it = dev;
+
+    while (it) {
+        mraa_gpio_write(it, value);
+        it = it->next;
+    }
+}
+
 static mraa_result_t
 mraa_gpio_unexport_force(mraa_gpio_context dev)
 {
@@ -1054,6 +1105,18 @@ mraa_gpio_close(mraa_gpio_context dev)
 
     free(dev);
     return result;
+}
+
+mraa_result_t
+mraa_gpio_close_multiple(mraa_gpio_context dev)
+{
+    mraa_gpio_context it = dev, tmp;
+
+    while(it) {
+        tmp = it->next;
+        mraa_gpio_close(it);
+        it = tmp;
+    }
 }
 
 mraa_result_t
