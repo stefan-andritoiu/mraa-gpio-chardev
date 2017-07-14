@@ -106,6 +106,16 @@ struct _firmata {
 };
 #endif
 
+struct _gpio_group {
+    int is_required;
+    int dev_fd;
+    int gpiod_handle;
+    unsigned int gpio_chip;
+    /* We can have multiple lines in a gpio group. */
+    unsigned int num_gpio_lines;
+    unsigned int *gpio_lines;
+};
+
 /**
  * A structure representing a gpio pin.
  */
@@ -136,6 +146,7 @@ struct _gpio {
 #endif
 
 #if defined(GPIOD_INTERFACE)
+    /* TODO: The below members should be integrated in gpio_group struct. */
     int dev_fd;
     int gpiod_handle;
     unsigned int gpio_chip;
@@ -143,7 +154,14 @@ struct _gpio {
 #endif
 
     /* Multiple gpio support. */
+#if defined(GPIOD_INTERFACE)
+    unsigned int num_chips;
+    struct _gpio_group *gpio_group;
+    /* Pin index passed by the user to gpio_group structures. */
+    int *pin_to_gpio_table;
+#else
     struct _gpio *next;
+#endif
 };
 
 /**

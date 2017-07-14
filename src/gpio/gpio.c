@@ -200,6 +200,7 @@ mraa_gpio_init(int pin)
     r->gpio_line = board->pins[pin].gpio.gpio_line;
     r->gpiod_handle = -1;
     free(cinfo);
+
 #endif
 
     if (r->phy_pin == -1)
@@ -217,9 +218,101 @@ mraa_gpio_init(int pin)
 
 mraa_gpio_context mraa_gpio_init_multiple(int num_pins, int pins[]) {
 #if defined(GPIOD_INTERFACE)
-    syslog(LOG_DEBUG, "mraa_gpio_init_multiple(): gpiod_interface");
+    int chip_id, line_offset;
+    mraa_gpio_context dev;
+    mraa_board_t* board = plat;
+    mraa_gpiod_group_t gpio_group;
+
+    if (board == NULL) {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: init: platform not initialised");
+        return NULL;
+    }
+
+    dev = (mraa_gpio_context) calloc(1, sizeof(struct _gpio));
+    if (dev == NULL) {
+        syslog(LOG_CRIT, "[GPIOD_INTERFACE]: Failed to allocate memory for context");
+        return NULL;
+    }
+
+    dev->pin_to_gpio_table = malloc(num_pins * sizeof(int));
+
+    dev->num_chips = mraa_get_number_of_gpio_chips();
+    if (dev->num_chips <= 0) {
+        free(dev);
+        return NULL;
+    }
+
+    gpio_group = calloc(dev->num_chips, sizeof(struct _gpio_group));
+    for (int i = 0; i < dev->num_chips; ++i) {
+        gpio_group[i].gpio_chip = i;
+        /* Just to be sure realloc has the desired behaviour. */
+        gpio_group[i].gpio_lines = NULL;
+    }
+
+    for (int i = 0; i < num_pins; ++i) {
+        if (mraa_is_sub_platform_id(pins[i])) {
+            syslog(LOG_NOTICE, "[GPIOD_INTERFACE]: init: Using sub platform for %d", pins[i]);
+            board = board->sub_platform;
+            if (board == NULL) {
+                syslog(LOG_ERR, "[GPIOD_INTERFACE]: init: Sub platform not initialised for pin %d", pins[i]);
+                return NULL;
+            }
+            pins[i] = mraa_get_sub_platform_index(pins[i]);
+        }
+
+        if (pins[i] < 0 || pins[i] >= board->phy_pin_count) {
+            syslog(LOG_ERR, "[GPIOD_INTERFACE]: init: pin %d beyond platform pin count (%d)", pins[i], board->phy_pin_count);
+            return NULL;
+        }
+
+        if (board->pins[pins[i]].capabilities.gpio != 1) {
+            syslog(LOG_ERR, "[GPIOD_INTERFACE]: init: pin %d not capable of gpio", pins[i]);
+            return NULL;
+        }
+
+        if (board->pins[pins[i]].gpio.mux_total > 0) {
+            if (mraa_setup_mux_mapped(board->pins[pins[i]].gpio) != MRAA_SUCCESS) {
+                syslog(LOG_ERR, "[GPIOD_INTERFACE]: init: unable to setup muxes for pin %d", pins[i]);
+                return NULL;
+            }
+        }
+
+        chip_id = board->pins[pins[i]].gpio.gpio_chip;
+        line_offset = board->pins[pins[i]].gpio.gpio_line;
+
+        /* Map pin to _gpio_group structure. */
+        dev->pin_to_gpio_table[i] = chip_id;
+
+        if (!gpio_group[chip_id].is_required) {
+            mraa_gpiod_chip_info* cinfo = mraa_get_chip_info_by_number(chip_id);
+            if (!cinfo) {
+                syslog(LOG_ERR, "[GPIOD_INTERFACE]: error getting gpio_chip_info for chip %d", chip_id);
+                mraa_free_gpio_groups(dev);
+                free(dev);
+                return NULL;
+            }
+
+            gpio_group[chip_id].dev_fd = cinfo->chip_fd;
+            gpio_group[chip_id].is_required = 1;
+            gpio_group[chip_id].gpiod_handle = -1;
+
+            free(cinfo);
+        }
+
+        int line_in_group;
+        line_in_group = gpio_group[chip_id].num_gpio_lines;
+        gpio_group[chip_id].gpio_lines = realloc(
+            gpio_group[chip_id].gpio_lines,
+            (line_in_group + 1) * sizeof(unsigned int));
+
+        gpio_group[chip_id].gpio_lines[line_in_group] = line_offset;
+        gpio_group[chip_id].num_gpio_lines++;
+    }
+
+    dev->gpio_group = gpio_group;
+
+    return dev;
 #else
-    syslog(LOG_DEBUG, "mraa_gpio_init_multiple(): sysfs_interface");
     mraa_gpio_context head = NULL, current, tmp;
 
     for (int i = 0; i < num_pins; ++i) {
@@ -309,7 +402,6 @@ mraa_gpio_wait_interrupt(int fd
     // do a final read to clear interrupt
     read(fd, &c, 1);
 #endif
-
     return MRAA_SUCCESS;
 }
 
@@ -616,7 +708,7 @@ mraa_gpio_mode(mraa_gpio_context dev, mraa_gpio_mode_t mode)
         return MRAA_ERROR_UNSPECIFIED;
     }
     flags = linfo->flags;
-    mraa_free_line_info(linfo);
+    free(linfo);
 
     /* Without changing the API, for now, we can request only one mode per call. */
     switch (mode) {
@@ -711,6 +803,7 @@ mraa_gpio_dir(mraa_gpio_context dev, mraa_gpio_dir_t dir)
     }
 
 #if defined(GPIOD_INTERFACE)
+
     int line_handle;
     unsigned flags = 0;
 
@@ -725,7 +818,7 @@ mraa_gpio_dir(mraa_gpio_context dev, mraa_gpio_dir_t dir)
         return MRAA_ERROR_UNSPECIFIED;
     }
     flags = linfo->flags;
-    mraa_free_line_info(linfo);
+    free(linfo);
 
     switch (dir) {
         case MRAA_GPIO_OUT:
@@ -819,12 +912,15 @@ mraa_gpio_dir(mraa_gpio_context dev, mraa_gpio_dir_t dir)
 mraa_result_t
 mraa_gpio_dir_multiple(mraa_gpio_context dev, mraa_gpio_dir_t dir)
 {
+#if defined(GPIOD_INTERFACE)
+#else
     mraa_gpio_context it = dev;
 
     while (it) {
         mraa_gpio_dir(it, dir);
         it = it->next;
     }
+#endif
 }
 
 mraa_result_t
@@ -845,7 +941,7 @@ mraa_gpio_read_dir(mraa_gpio_context dev, mraa_gpio_dir_t *dir)
     }
     /* This is overkill for now, but in the future we can extract much more info from a line using the above method. */
     *dir = linfo->flags & GPIOLINE_FLAG_IS_OUT ? MRAA_GPIO_OUT : MRAA_GPIO_IN;
-    mraa_free_line_info(linfo);
+    free(linfo);
 
 #else
     if (dev == NULL) {
@@ -907,7 +1003,7 @@ mraa_gpio_read(mraa_gpio_context dev)
         return MRAA_ERROR_UNSPECIFIED;
     }
     flags = linfo->flags;
-    mraa_free_line_info(linfo);
+    free(linfo);
 
     flags = (flags | GPIOHANDLE_REQUEST_INPUT) & ~GPIOHANDLE_REQUEST_OUTPUT;
 
@@ -969,7 +1065,7 @@ mraa_gpio_write(mraa_gpio_context dev, int value)
         return MRAA_ERROR_UNSPECIFIED;
     }
     flags = linfo->flags;
-    mraa_free_line_info(linfo);
+    free(linfo);
 
     flags = (flags | GPIOHANDLE_REQUEST_OUTPUT) & ~GPIOHANDLE_REQUEST_INPUT;
 
@@ -1027,12 +1123,15 @@ mraa_gpio_write(mraa_gpio_context dev, int value)
 mraa_result_t
 mraa_gpio_write_multiple(mraa_gpio_context dev, int value)
 {
+#if defined(GPIOD_INTERFACE)
+#else
     mraa_gpio_context it = dev;
 
     while (it) {
         mraa_gpio_write(it, value);
         it = it->next;
     }
+#endif
 }
 
 static mraa_result_t
@@ -1104,19 +1203,37 @@ mraa_gpio_close(mraa_gpio_context dev)
 #endif
 
     free(dev);
+
     return result;
 }
 
 mraa_result_t
 mraa_gpio_close_multiple(mraa_gpio_context dev)
 {
+    mraa_result_t result = MRAA_SUCCESS;
+
+    if (dev == NULL) {
+        syslog(LOG_ERR, "gpio: close: context is invalid");
+        return MRAA_ERROR_INVALID_HANDLE;
+    }
+
+#if defined(GPIOD_INTERFACE)
+    mraa_free_gpio_groups(dev);
+
+    free(dev);
+#else
     mraa_gpio_context it = dev, tmp;
 
     while(it) {
         tmp = it->next;
-        mraa_gpio_close(it);
+        if (mraa_gpio_close(it) != MRAA_SUCCESS) {
+            result = MRAA_ERROR_UNSPECIFIED;
+        }
         it = tmp;
     }
+#endif
+
+    return result;
 }
 
 mraa_result_t
@@ -1233,19 +1350,6 @@ mraa_gpio_out_driver_mode(mraa_gpio_context dev, mraa_gpio_out_driver_mode_t mod
 #define CHIP_DEV_PREFIX "gpiochip"
 #define STR_SIZE 64
 
-/* Internal function. */
-int gpiod_ioctl(int fd, unsigned long gpio_request, void *data)
-{
-    int status;
-
-    status = ioctl(fd, gpio_request, data);
-    if (status < 0) {
-        syslog(LOG_ERR, "[GPIOD_INTERFACE]: ioctl() error %s", strerror(errno));
-    }
-
-    return status;
-}
-
 mraa_gpiod_chip_info* mraa_get_chip_info_by_path(const char *path)
 {
     mraa_gpiod_chip_info* cinfo;
@@ -1328,12 +1432,6 @@ mraa_gpiod_chip_info* mraa_get_chip_info_by_number(unsigned number)
     return cinfo;
 }
 
-void mraa_free_chip_info(mraa_gpiod_chip_info* cinfo)
-{
-    close(cinfo->chip_fd);
-    free(cinfo);
-}
-
 mraa_gpiod_line_info* mraa_get_line_info_from_descriptor(int chip_fd, unsigned line_number)
 {
     int status;
@@ -1369,7 +1467,7 @@ mraa_gpiod_line_info* mraa_get_line_info_by_chip_number(unsigned chip_number, un
 
     linfo = mraa_get_line_info_from_descriptor(cinfo->chip_fd, line_number);
 
-    mraa_free_chip_info(cinfo);
+    free(cinfo);
 
     return linfo;
 }
@@ -1387,7 +1485,7 @@ mraa_gpiod_line_info* mraa_get_line_info_by_chip_name(const char* chip_name, uns
 
     linfo = mraa_get_line_info_from_descriptor(cinfo->chip_fd, line_number);
 
-    mraa_free_chip_info(cinfo);
+    free(cinfo);
 
     return linfo;
 }
@@ -1405,14 +1503,9 @@ mraa_gpiod_line_info* mraa_get_line_info_by_chip_label(const char* chip_label, u
 
     linfo = mraa_get_line_info_from_descriptor(cinfo->chip_fd, line_number);
 
-    mraa_free_chip_info(cinfo);
+    free(cinfo);
 
     return linfo;
-}
-
-void mraa_free_line_info(mraa_gpiod_line_info* linfo)
-{
-    free(linfo);
 }
 
 int mraa_get_line_handle(int chip_fd, unsigned line_offset, unsigned flags, unsigned default_value)
@@ -1469,5 +1562,50 @@ int mraa_get_line_value(int line_handle)
     }
 
     return __hdata.values[0];
+}
+
+int mraa_get_number_of_gpio_chips()
+{
+    int num_chips = 0;
+    DIR *dev_dir;
+    struct dirent *dir;
+    const unsigned int len = strlen(CHIP_DEV_PREFIX);
+
+    dev_dir = opendir(DEV_DIR);
+    if (dev_dir) {
+        while ((dir = readdir(dev_dir)) != NULL) {
+            if (!strncmp(dir->d_name, CHIP_DEV_PREFIX, len)) {
+                num_chips++;
+            }
+        }
+        closedir(dev_dir);
+    } else {
+        syslog(LOG_ERR, "[GPIOD_INTERFACE]: opendir() error");
+        return -1;
+    }
+
+    /* Assume opendir() error. */
+    return num_chips;
+}
+
+void mraa_free_gpio_groups(mraa_gpio_context dev)
+{
+    mraa_gpiod_group_t gpio_group = dev->gpio_group;
+
+    for (int i = 0; i < dev->num_chips; ++i) {
+        if (gpio_group[i].is_required) {
+            free(gpio_group[i].gpio_lines);
+
+            if (gpio_group[i].gpiod_handle != -1) {
+                close(gpio_group[i].gpiod_handle);
+            }
+            close(gpio_group[i].dev_fd);
+        }
+    }
+
+    free(gpio_group);
+
+    /* Also delete the pin to gpio chip mapping. */
+    free(dev->pin_to_gpio_table);
 }
 #endif
