@@ -63,9 +63,9 @@ typedef enum {
     MRAA_GPIO_PULLDOWN = 2, /**< Resistive Low */
     MRAA_GPIO_HIZ = 3,      /**< High Z State */
 #if defined(GPIOD_INTERFACE)
-    MRAA_GPIO_ACTIVE_LOW = 4,
-    MRAA_GPIO_OPEN_DRAIN = 5,
-    MRAA_GPIO_OPEN_SOURCE = 6,
+    MRAA_GPIOD_ACTIVE_LOW = 4,
+    MRAA_GPIOD_OPEN_DRAIN = 5,
+    MRAA_GPIOD_OPEN_SOURCE = 6,
 #endif
 } mraa_gpio_mode_t;
 
@@ -171,6 +171,7 @@ mraa_result_t mraa_gpio_mode(mraa_gpio_context dev, mraa_gpio_mode_t mode);
  * @return Result of operation
  */
 mraa_result_t mraa_gpio_dir(mraa_gpio_context dev, mraa_gpio_dir_t dir);
+
 mraa_result_t mraa_gpio_dir_multiple(mraa_gpio_context dev, mraa_gpio_dir_t dir);
 
 /**
@@ -202,6 +203,11 @@ mraa_result_t mraa_gpio_close_multiple(mraa_gpio_context dev);
  */
 int mraa_gpio_read(mraa_gpio_context dev);
 
+/* Values array is provided by user. Must be the same size as the array passed in init.
+ * It will be overwritten with the read results.
+ */
+mraa_result_t mraa_gpio_read_multiple(mraa_gpio_context dev, int output_values[]);
+
 /**
  * Write to the Gpio Value.
  *
@@ -211,7 +217,7 @@ int mraa_gpio_read(mraa_gpio_context dev);
  */
 mraa_result_t mraa_gpio_write(mraa_gpio_context dev, int value);
 
-mraa_result_t mraa_gpio_write_multiple(mraa_gpio_context dev, int value);
+mraa_result_t mraa_gpio_write_multiple(mraa_gpio_context dev, int input_values[]);
 
 /**
  * Change ownership of the context.
@@ -286,9 +292,9 @@ mraa_gpiod_line_info* mraa_get_line_info_by_chip_number(unsigned chip_number, un
 mraa_gpiod_line_info* mraa_get_line_info_by_chip_name(const char* chip_name, unsigned line_number);
 mraa_gpiod_line_info* mraa_get_line_info_by_chip_label(const char* chip_label, unsigned line_number);
 
-int mraa_get_line_handle(int chip_fd, unsigned line_offset, unsigned flags, unsigned default_value);
-int mraa_set_line_value(int line_handle, unsigned char value);
-int mraa_get_line_value(int line_handle);
+int mraa_get_lines_handle(int chip_fd, unsigned line_offsets[], unsigned num_lines, unsigned flags, unsigned default_value);
+int mraa_set_line_values(int line_handle, unsigned int num_lines, unsigned char input_values[]);
+int mraa_get_line_values(int line_handle, unsigned int num_lines, unsigned char output_values[]);
 
 /* Multiple gpio support. */
 typedef struct _gpio_group* mraa_gpiod_group_t;

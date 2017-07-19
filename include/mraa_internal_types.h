@@ -114,6 +114,11 @@ struct _gpio_group {
     /* We can have multiple lines in a gpio group. */
     unsigned int num_gpio_lines;
     unsigned int *gpio_lines;
+
+    /* R/W stuff.*/
+    unsigned char *rw_values;
+    /* Reverse mapping to original pin number indexes. */
+    unsigned int *gpio_group_to_pins_table;
 };
 
 /**
@@ -159,6 +164,7 @@ struct _gpio {
     struct _gpio_group *gpio_group;
     /* Pin index passed by the user to gpio_group structures. */
     int *pin_to_gpio_table;
+    unsigned int num_pins;
 #else
     struct _gpio *next;
 #endif
