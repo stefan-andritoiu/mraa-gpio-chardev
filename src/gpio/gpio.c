@@ -1193,13 +1193,15 @@ mraa_gpio_read_multiple(mraa_gpio_context dev, int output_values[])
     }
 #else
     mraa_gpio_context it = dev;
+    int i = 0;
 
-    for (int i = 0; i < num_pins; ++i) {
-        values[i] = mraa_gpio_read(it);
-        if (values[i] == -1) {
+    while(it) {
+        output_values[i] = mraa_gpio_read(it);
+        if (output_values[i] == -1) {
             syslog(LOG_ERR, "gpio: read_multiple: failed to read multiple gpio pins");
             return MRAA_ERROR_INVALID_RESOURCE;
         }
+        i++;
         it = it->next;
     }
 #endif
@@ -1333,9 +1335,14 @@ mraa_gpio_write_multiple(mraa_gpio_context dev, int input_values[])
 #else
     mraa_gpio_context it = dev;
     int i = 0;
+    mraa_result_t status;
 
-    while (it && i <= num_pins) {
-        mraa_gpio_write(it, values[i++]);
+    while (it) {
+        status = mraa_gpio_write(it, input_values[i++]);
+        if (status != MRAA_SUCCESS) {
+            syslog(LOG_ERR, "gpio: read_multiple: failed to write to multiple gpio pins");
+            return status;
+        }
         it = it->next;
     }
 #endif
