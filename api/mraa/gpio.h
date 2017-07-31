@@ -114,7 +114,7 @@ typedef enum {
  */
 mraa_gpio_context mraa_gpio_init(int pin);
 
-mraa_gpio_context mraa_gpio_init_multiple(int num_pins, int pins[]);
+mraa_gpio_context mraa_gpio_init_multiple(int pins[], int num_pins);
 
 /**
  * Initialise gpio context without any mapping to a pin

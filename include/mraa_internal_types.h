@@ -119,6 +119,8 @@ struct _gpio_group {
     unsigned char *rw_values;
     /* Reverse mapping to original pin number indexes. */
     unsigned int *gpio_group_to_pins_table;
+
+    unsigned int flags;
 };
 
 /**
@@ -169,6 +171,13 @@ struct _gpio {
     struct _gpio *next;
 #endif
 };
+
+/* Macro for looping over gpio chips. */
+#define for_each_gpio_group(group, dev) \
+    for (int i = 0; \
+        i < dev->num_chips && (group = &dev->gpio_group[i]); \
+        ++i) \
+            if (dev->gpio_group[i].is_required)
 
 /**
  * A structure representing a I2C bus

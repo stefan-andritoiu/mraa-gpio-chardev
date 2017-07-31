@@ -246,7 +246,7 @@ mraa_gpio_init(int pin)
     return r;
 }
 
-mraa_gpio_context mraa_gpio_init_multiple(int num_pins, int pins[]) {
+mraa_gpio_context mraa_gpio_init_multiple(int pins[], int num_pins) {
 #if defined(GPIOD_INTERFACE)
     int chip_id, line_offset;
     mraa_gpio_context dev;
@@ -659,7 +659,6 @@ mraa_gpio_isr(mraa_gpio_context dev, mraa_gpio_edge_t mode, void (*fptr)(void*),
 
     mraa_result_t ret = mraa_gpio_edge_mode(dev, mode);
     if (ret != MRAA_SUCCESS) {
-        syslog(LOG_ERR, "[GPIOD]: the problem");
         return ret;
     }
 
