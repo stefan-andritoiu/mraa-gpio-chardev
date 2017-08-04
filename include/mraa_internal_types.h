@@ -152,24 +152,20 @@ struct _gpio {
     AGpio *bgpio;
 #endif
 
-#if defined(GPIOD_INTERFACE)
     /* TODO: The below members should be integrated in gpio_group struct. */
     int dev_fd;
     int gpiod_handle;
     unsigned int gpio_chip;
     unsigned int gpio_line;
-#endif
 
     /* Multiple gpio support. */
-#if defined(GPIOD_INTERFACE)
     unsigned int num_chips;
     struct _gpio_group *gpio_group;
     /* Pin index passed by the user to gpio_group structures. */
     int *pin_to_gpio_table;
     unsigned int num_pins;
-#else
+
     struct _gpio *next;
-#endif
 };
 
 /* Macro for looping over gpio chips. */
@@ -478,6 +474,7 @@ typedef struct _board_t {
     mraa_pininfo_t* pins;     /**< Pointer to pin array */
     mraa_adv_func_t* adv_func;    /**< Pointer to advanced function disptach table */
     struct _board_t* sub_platform;     /**< Pointer to sub platform */
+    mraa_boolean_t chardev_capable;  /**< Decide what interface is being used: old sysfs or new char device*/
     /*@}*/
 } mraa_board_t;
 

@@ -62,11 +62,9 @@ typedef enum {
     MRAA_GPIO_PULLUP = 1,   /**< Resistive High */
     MRAA_GPIO_PULLDOWN = 2, /**< Resistive Low */
     MRAA_GPIO_HIZ = 3,      /**< High Z State */
-#if defined(GPIOD_INTERFACE)
     MRAA_GPIOD_ACTIVE_LOW = 4,
     MRAA_GPIOD_OPEN_DRAIN = 5,
     MRAA_GPIOD_OPEN_SOURCE = 6,
-#endif
 } mraa_gpio_mode_t;
 
 /**
@@ -271,38 +269,6 @@ mraa_result_t mraa_gpio_input_mode(mraa_gpio_context dev, mraa_gpio_input_mode_t
  */
 mraa_result_t mraa_gpio_out_driver_mode(mraa_gpio_context dev, mraa_gpio_out_driver_mode_t mode);
 
-#if defined(GPIOD_INTERFACE)
-
-#include <linux/gpio.h>
-#include <dirent.h>
-
-typedef struct {
-    int chip_fd;
-    struct gpiochip_info chip_info;
-} mraa_gpiod_chip_info;
-
-typedef struct gpioline_info mraa_gpiod_line_info;
-
-mraa_gpiod_chip_info* mraa_get_chip_info_by_path(const char *path);
-mraa_gpiod_chip_info* mraa_get_chip_info_by_name(const char *name);
-mraa_gpiod_chip_info* mraa_get_chip_info_by_label(const char *label);
-mraa_gpiod_chip_info* mraa_get_chip_info_by_number(unsigned number);
-
-mraa_gpiod_line_info* mraa_get_line_info_by_chip_number(unsigned chip_number, unsigned line_number);
-mraa_gpiod_line_info* mraa_get_line_info_by_chip_name(const char* chip_name, unsigned line_number);
-mraa_gpiod_line_info* mraa_get_line_info_by_chip_label(const char* chip_label, unsigned line_number);
-
-int mraa_get_lines_handle(int chip_fd, unsigned line_offsets[], unsigned num_lines, unsigned flags, unsigned default_value);
-int mraa_set_line_values(int line_handle, unsigned int num_lines, unsigned char input_values[]);
-int mraa_get_line_values(int line_handle, unsigned int num_lines, unsigned char output_values[]);
-
-/* Multiple gpio support. */
-typedef struct _gpio_group* mraa_gpiod_group_t;
-
-int mraa_get_number_of_gpio_chips();
-void mraa_free_gpio_groups(mraa_gpio_context dev);
-
-#endif
 #ifdef __cplusplus
 }
 #endif
