@@ -131,6 +131,8 @@ mraa_gpio_context mraa_gpio_init_raw(int gpiopin);
  */
 mraa_result_t mraa_gpio_edge_mode(mraa_gpio_context dev, mraa_gpio_edge_t mode);
 
+mraa_result_t mraa_gpio_edge_mode_multiple(mraa_gpio_context dev, mraa_gpio_edge_t mode);
+
 /**
  * Set an interrupt on pin
  *
@@ -142,6 +144,8 @@ mraa_result_t mraa_gpio_edge_mode(mraa_gpio_context dev, mraa_gpio_edge_t mode);
  * @return Result of operation
  */
 mraa_result_t mraa_gpio_isr(mraa_gpio_context dev, mraa_gpio_edge_t edge, void (*fptr)(void*), void* args);
+
+mraa_result_t mraa_gpio_isr_multiple(mraa_gpio_context dev, mraa_gpio_edge_t edge, void (*fptr)(void*), void* args);
 
 /**
  * Stop the current interrupt watcher on this Gpio, and set the Gpio edge mode

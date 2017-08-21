@@ -121,6 +121,9 @@ struct _gpio_group {
     unsigned int *gpio_group_to_pins_table;
 
     unsigned int flags;
+
+    /* Event specific fields. */
+    int *event_handles;
 };
 
 /**
@@ -158,7 +161,7 @@ struct _gpio {
     unsigned int gpio_chip;
     unsigned int gpio_line;
 
-    /* Multiple gpio support. */
+    /* Multiple gpio support. These members are treated separately for now until multiple gpio support is accepted. */
     unsigned int num_chips;
     struct _gpio_group *gpio_group;
     /* Pin index passed by the user to gpio_group structures. */
@@ -170,10 +173,10 @@ struct _gpio {
 
 /* Macro for looping over gpio chips. */
 #define for_each_gpio_group(group, dev) \
-    for (int i = 0; \
-        i < dev->num_chips && (group = &dev->gpio_group[i]); \
-        ++i) \
-            if (dev->gpio_group[i].is_required)
+    for (int k = 0; \
+        k < dev->num_chips && (group = &dev->gpio_group[k]); \
+        ++k) \
+            if (dev->gpio_group[k].is_required)
 
 /**
  * A structure representing a I2C bus

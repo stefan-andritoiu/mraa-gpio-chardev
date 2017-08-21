@@ -262,6 +262,10 @@ mraa_gpio_init(int pin)
             return NULL;
         }
     }
+
+    /* Just one gpio line. */
+    r->num_pins = 1;
+
     return r;
 }
 
@@ -366,6 +370,9 @@ mraa_gpio_context mraa_gpio_init_multiple(int pins[], int num_pins) {
         for (int i = 0; i < dev->num_chips; ++i) {
             gpio_group[i].rw_values = calloc(gpio_group[i].num_gpio_lines, sizeof(unsigned char));
             gpio_group[i].gpio_group_to_pins_table = calloc(gpio_group[i].num_gpio_lines, sizeof(int));
+
+            /* Set event handle arrays for all lines contained on a chip to NULL. */
+            gpio_group[i].event_handles = NULL;
         }
 
         /* Finally map the inverse relation between a gpio group and its original pin numbers provided by user. */
@@ -436,11 +443,11 @@ mraa_gpio_wait_interrupt(int fd
 
     // setup poll on POLLPRI
     pfd[0].fd = fd;
-#if defined(GPIOD_INTERFACE)
-    pfd[0].events = POLLIN;
-#else
-    pfd[0].events = POLLPRI;
-#endif
+    if (plat->chardev_capable) {
+        pfd[0].events = POLLIN;
+    } else {
+        pfd[0].events = POLLPRI;
+    }
 
 
     // do an initial read to clear interrupt
@@ -460,16 +467,47 @@ mraa_gpio_wait_interrupt(int fd
     poll(pfd, 2, -1);
 #endif
 
-#if defined(GPIOD_INTERFACE)
-    if (pfd[0].revents & POLLIN) {
-        struct gpioevent_data event_data;
+    if (plat->chardev_capable) {
+        if (pfd[0].revents & POLLIN) {
+            struct gpioevent_data event_data;
+            // do a final read to clear interrupt
+            read(fd, &event_data, sizeof(event_data));
+        }
+    } else {
         // do a final read to clear interrupt
-        read(pfd[0].fd, &event_data, sizeof(event_data));
+        read(fd, &c, 1);
     }
-#else
-    // do a final read to clear interrupt
-    read(fd, &c, 1);
-#endif
+
+    return MRAA_SUCCESS;
+}
+
+static mraa_result_t
+mraa_gpio_wait_interrupt_multiple(int fds[], int num_fds)
+{
+    struct pollfd pfd[num_fds];
+    struct gpioevent_data event_data;
+
+    if (!fds) {
+        return MRAA_ERROR_INVALID_PARAMETER;
+    }
+
+    for (int i = 0; i < num_fds; ++i) {
+        pfd[i].fd = fds[i];
+        pfd[i].events = POLLIN;
+
+        lseek(fds[i], 0, SEEK_SET);
+
+        read(fds[i], &event_data, sizeof(event_data));
+    }
+
+    poll(pfd, num_fds, -1);
+
+    for (int i = 0; i < num_fds; ++i) {
+        if (pfd[i].revents & POLLIN) {
+            read(fds[i], &event_data, sizeof(event_data));
+        }
+    }
+
     return MRAA_SUCCESS;
 }
 
@@ -482,25 +520,25 @@ mraa_gpio_interrupt_handler(void* arg)
     }
 
     mraa_gpio_context dev = (mraa_gpio_context) arg;
-    int fp = -1;
+    int fp;
     mraa_result_t ret;
 
     if (IS_FUNC_DEFINED(dev, gpio_interrupt_handler_init_replace)) {
         if (dev->advance_func->gpio_interrupt_handler_init_replace(dev) != MRAA_SUCCESS)
             return NULL;
     } else {
-#if defined (GPIOD_INTERFACE)
-        fp = dev->gpiod_handle;
-#else
-        // open gpio value with open(3)
-        char bu[MAX_SIZE];
-        snprintf(bu, MAX_SIZE, SYSFS_CLASS_GPIO "/gpio%d/value", dev->pin);
-        fp = open(bu, O_RDONLY);
-        if (fp < 0) {
-            syslog(LOG_ERR, "gpio%i: interrupt_handler: failed to open 'value' : %s", dev->pin, strerror(errno));
-            return NULL;
+        if (plat->chardev_capable) {
+            fp = dev->gpiod_handle;
+        } else {
+            // open gpio value with open(3)
+            char bu[MAX_SIZE];
+            snprintf(bu, MAX_SIZE, SYSFS_CLASS_GPIO "/gpio%d/value", dev->pin);
+            fp = open(bu, O_RDONLY);
+            if (fp < 0) {
+                syslog(LOG_ERR, "gpio%i: interrupt_handler: failed to open 'value' : %s", dev->pin, strerror(errno));
+                return NULL;
+            }
         }
-#endif
     }
 
 #ifndef HAVE_PTHREAD_CANCEL
@@ -560,6 +598,59 @@ mraa_gpio_interrupt_handler(void* arg)
                     lang_func->java_delete_global_ref(dev->isr_args);
                     lang_func->java_detach_thread();
                 }
+            }
+
+            return NULL;
+        }
+    }
+}
+
+/* In it's simplest form, for now. */
+static void*
+mraa_gpio_interrupt_handler_multiple(void* arg)
+{
+    if (arg == NULL) {
+        syslog(LOG_ERR, "gpio: interrupt_handler: context is invalid");
+        return NULL;
+    }
+
+    mraa_gpio_context dev = (mraa_gpio_context) arg;
+    mraa_gpiod_group_t gpio_group;
+    mraa_result_t ret;
+    int idx = 0;
+
+    int *fps = malloc(dev->num_pins * sizeof(int));
+    if (!fps) {
+        syslog(LOG_ERR, "mraa_gpio_interrupt_handler_multiple() malloc error");
+        return NULL;
+    }
+
+    for_each_gpio_group(gpio_group, dev) {
+        for (int i = 0; i < gpio_group->num_gpio_lines; ++i) {
+            fps[idx++] = gpio_group->event_handles[i];
+        }
+    }
+
+    for (;;) {
+        ret = mraa_gpio_wait_interrupt_multiple(fps, idx);
+
+        if (ret == MRAA_SUCCESS && !dev->isr_thread_terminating) {
+#ifdef HAVE_PTHREAD_CANCEL
+            pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
+#endif
+            dev->isr(dev->isr_args);
+#ifdef HAVE_PTHREAD_CANCEL
+            pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+#endif
+        } else {
+#ifdef HAVE_PTHREAD_CANCEL
+            pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
+#endif
+            if (fps) {
+                for (int i = 0; i < idx; ++i) {
+                    close(fps[i]);
+                }
+                free(fps);
             }
 
             return NULL;
@@ -659,6 +750,68 @@ mraa_gpio_edge_mode(mraa_gpio_context dev, mraa_gpio_edge_t mode)
     return MRAA_SUCCESS;
 }
 
+mraa_result_t mraa_gpio_edge_mode_multiple(mraa_gpio_context dev, mraa_gpio_edge_t mode)
+{
+    if (dev == NULL) {
+        syslog(LOG_ERR, "gpio: edge_mode: context is invalid");
+        return MRAA_ERROR_INVALID_HANDLE;
+    }
+
+    if (!plat->chardev_capable) {
+        syslog(LOG_ERR, "mraa_gpio_isr_multiple() not supported for old sysfs interface");
+        return MRAA_ERROR_FEATURE_NOT_IMPLEMENTED;
+    }
+
+    int status;
+    mraa_gpiod_group_t gpio_group;
+
+    struct gpioevent_request req;
+
+    switch (mode) {
+        case MRAA_GPIO_EDGE_NONE:
+            return MRAA_SUCCESS;
+        case MRAA_GPIO_EDGE_BOTH:
+            req.eventflags = GPIOEVENT_REQUEST_BOTH_EDGES;
+            break;
+        case MRAA_GPIO_EDGE_RISING:
+            req.eventflags = GPIOEVENT_REQUEST_RISING_EDGE;
+            break;
+        case MRAA_GPIO_EDGE_FALLING:
+            req.eventflags = GPIOEVENT_REQUEST_FALLING_EDGE;
+            break;
+        default:
+            return MRAA_ERROR_FEATURE_NOT_IMPLEMENTED;
+    }
+
+    for_each_gpio_group(gpio_group, dev) {
+        if (gpio_group->gpiod_handle != -1) {
+            close(gpio_group->gpiod_handle);
+            gpio_group->gpiod_handle = -1;
+        }
+
+        gpio_group->event_handles = malloc(gpio_group->num_gpio_lines * sizeof(int));
+        if (!gpio_group->event_handles) {
+            syslog(LOG_ERR, "mraa_gpio_edge_mode_multiple(): malloc error!");
+            return MRAA_ERROR_NO_RESOURCES;
+        }
+
+        for (int i = 0; i < gpio_group->num_gpio_lines; ++i) {
+            req.lineoffset = gpio_group->gpio_lines[i];
+            req.handleflags = GPIOHANDLE_REQUEST_INPUT;
+
+            status = gpiod_ioctl(gpio_group->dev_fd, GPIO_GET_LINEEVENT_IOCTL, &req);
+            if (status < 0) {
+                syslog(LOG_ERR, "error getting line event handle for line %i", gpio_group->gpio_lines[i]);
+                return MRAA_ERROR_INVALID_RESOURCE;
+            }
+
+            gpio_group->event_handles[i] = req.fd;
+        }
+    }
+
+    return MRAA_SUCCESS;
+}
+
 mraa_result_t
 mraa_gpio_isr(mraa_gpio_context dev, mraa_gpio_edge_t mode, void (*fptr)(void*), void* args)
 {
@@ -692,7 +845,44 @@ mraa_gpio_isr(mraa_gpio_context dev, mraa_gpio_edge_t mode, void (*fptr)(void*),
     }
 
     dev->isr_args = args;
+
     pthread_create(&dev->thread_id, NULL, mraa_gpio_interrupt_handler, (void*) dev);
+
+    return MRAA_SUCCESS;
+}
+
+mraa_result_t mraa_gpio_isr_multiple(mraa_gpio_context dev, mraa_gpio_edge_t mode, void (*fptr)(void*), void* args)
+{
+    if (dev == NULL) {
+        syslog(LOG_ERR, "gpio: isr: context is invalid");
+        return MRAA_ERROR_INVALID_HANDLE;
+    }
+
+    // we only allow one isr per mraa_gpio_context
+    if (dev->thread_id != 0) {
+        return MRAA_ERROR_NO_RESOURCES;
+    }
+
+    //TODO: Check that this function is applied only when multiple lines are given as input in the init phase.
+
+    mraa_result_t ret = mraa_gpio_edge_mode_multiple(dev, mode);
+    if (ret != MRAA_SUCCESS) {
+        return ret;
+    }
+
+    dev->isr = fptr;
+
+    /* Most UPM sensors use the C API, the Java global ref must be created here. */
+    /* The reason for checking the callback function is internal callbacks. */
+    if (lang_func->java_create_global_ref != NULL) {
+        if (dev->isr == lang_func->java_isr_callback) {
+            args = lang_func->java_create_global_ref(args);
+        }
+    }
+
+    dev->isr_args = args;
+
+    pthread_create(&dev->thread_id, NULL, mraa_gpio_interrupt_handler_multiple, (void*) dev);
 
     return MRAA_SUCCESS;
 }
@@ -1807,6 +1997,15 @@ void mraa_free_gpio_groups(mraa_gpio_context dev)
             if (gpio_group[i].gpiod_handle != -1) {
                 close(gpio_group[i].gpiod_handle);
             }
+
+            if (gpio_group[i].event_handles != NULL) {
+                for (int j = 0; j < gpio_group[i].num_gpio_lines; ++j) {
+                    close(gpio_group[i].event_handles[j]);
+                }
+
+                free(gpio_group[i].event_handles);
+            }
+
             close(gpio_group[i].dev_fd);
         }
     }
